@@ -83,9 +83,7 @@ TYA        ; Transfer Y into A
 
 
 Common Math opcodes
-ADC #$01   ; ADd with Carry
-           ; A = A + $01 + carry
-           ; if the result is zero, the zero flag will be set
+
 
 SBC #$80   ; SuBtract with Carry
            ; A = A - $80 - (1 - carry)
@@ -147,10 +145,74 @@ BEQ $FF00  ; Branch if EQual, contnue running code there
            ; if zero is clear (values not equal) there is no jump, runs next instruction
 
 BNE $FF00  ; Branch if Not Equal - opposite above, jump is made when zero flag is clear
-
-
-
 */
 
+/*
+ ADC - Add with Carry
+A,Z,C,N = A+M+C
 
+This instruction adds the contents of a memory location to the accumulator 
+together with the carry bit. If overflow occurs the carry bit is set, this 
+enables multiple byte addition to be performed.
 
+Processor Status after use:
+
+C Carry Flag        : Set if overflow in bit 7
+Z Zero Flag         : Set if A = 0
+I Interrupt Disable : Not affected
+D Decimal Mode Flag : Not affected
+B Break Command     : Not affected
+V Overflow Flag     : Set if sign bit is incorrect
+N Negative Flag     : Set if bit 7 set
+
+Addressing Mode | Opcode | Bytes | Cycles
+Immediate       |   $69  |    2  | 2
+Zero Page       |   $65  |    2  | 3
+Zero Page,X     |   $75  |    2  | 4
+Absolute        |   $6D  |    3  | 4
+Absolute,X      |   $7D  |    3  | 4 (+1 if page crossed)
+Absolute,Y      |   $79  |    3  | 4 (+1 if page crossed)
+(Indirect,X)    |   $61  |    2  | 6
+(Indirect),Y    |   $71  |    2  | 5 (+1 if page crossed)
+ */
+
+#define OPCODE(op, len, func)
+OPCODE(0x69, 2, opcode_adc);
+OPCODE(0x65, 2, opcode_adc);
+OPCODE(0x75, 2, opcode_adc);
+OPCODE(0x6D, 3, opcode_adc);
+OPCODE(0x7D, 3, opcode_adc);
+OPCODE(0x79, 3, opcode_adc);
+OPCODE(0x61, 2, opcode_adc);
+OPCODE(0x71, 2, opcode_adc);
+
+void opcode_adc(uint8_t op, uint8_t addr1, uint8_t addr2)
+{
+  switch (op)
+  {
+    case 0x69:
+
+      break;
+
+    case 0x65:
+      break;
+
+    case 0x69:
+      break;
+
+    case 0x6d:
+      break;
+
+    case 0x71:
+      break;
+
+    case 0x75:
+      break;
+
+    case 0x79:
+      break;
+
+    case 0x7D:
+      break;
+  }
+}

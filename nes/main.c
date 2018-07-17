@@ -1,8 +1,8 @@
+#include "cpu-6502.h"
+#include "nes_cart.h"
 #include <stdio.h>
-#include <stdint.h> //uint8_t
-#include <stdlib.h> //malloc
 #include <string.h>
-#include "machine.h"
+
 
 void printHelp(char* app)
 {
@@ -14,7 +14,8 @@ void printHelp(char* app)
    printf("\n");
 }
 
-void hexdump(uint8_t* binary, int length)
+
+void hexdump(const uint8_t* binary, int length)
 {
    int address = 0;
  
@@ -40,6 +41,7 @@ void hexdump(uint8_t* binary, int length)
        }
    }
 }
+
 
 int main(int argc, char* argv[])
 {
@@ -78,35 +80,67 @@ int main(int argc, char* argv[])
       return -1;
    }
    
-   FILE* f = (FILE*) fopen(argv[2], "r");
-   if(f != NULL) // if pointer is valid
-   {
+   // FILE* f = (FILE*) fopen(argv[2], "r");
+   // if(f != NULL) // if pointer is valid
+   // {
       // how big is file
-      fseek(f, 0, SEEK_END);
-      int fsize = ftell(f);
-      fseek(f, 0, SEEK_SET);
+      // fseek(f, 0, SEEK_END);
+      // int fsize = ftell(f);
+      // fseek(f, 0, SEEK_SET);
       
       // read in whole file
-      uint8_t* binary = (uint8_t*) malloc(fsize+1);
-      fread(binary, fsize, sizeof(uint8_t), f);
-      fclose(f); // close file
+      // uint8_t* binary = (uint8_t*) malloc(fsize+1);
+      // fread(binary, fsize, sizeof(uint8_t), f);
+      // fclose(f); // close file
+
+
+      // read in the nes file
+      uint8_t rtn = nes_read(argv[2]);
+      if (rtn)
+        printf("nes_read failed with error %u\n", rtn);
+      const uint8_t *binary = nes_prg_rom();
+      uint8_t prg_blksz = nes_prg_blksz();
+      int fsize = prg_blksz*(16*1024);
       
+      cpu_init();
+      cpu_load_prg(binary, prg_blksz);
+      cpu_reset();
+      cpu_run();
+
       // hexdump
       if(dump)
          hexdump(binary, fsize);
       
-      Machine mach;
+      //Machine mach;
       // disassemble
+      //int pc = 0;
       if(diss)
-         mach.disassemble(binary, fsize);
+      {
+      //   for (int i=0xd70; i < fsize; )
+      //   {
+      //     if (opcode_len[binary[i]] > 0)
+      //     {
+      //       printf("%s\n", opcode_name[binary[i]]);
+      //       i+=opcode_len[binary[i]];
+      //     }
+      //     else
+      //     {
+      //       printf("na\n");
+      //       i++;
+      //     }
+      //    //mach.disassemble(binary, fsize);
+      //   }
+      }
       
       // emulate
       if(emulate)
-         mach.execute(binary, fsize);
+      {
+         //mach.execute(binary, fsize);
+      }
       
       // cleanup memory
-      free(binary);
-   }
+      // free(binary);
+   // }
    
    return 0;
 }

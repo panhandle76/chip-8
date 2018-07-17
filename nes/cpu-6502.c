@@ -1,218 +1,981 @@
-/*
-Information pulled from https://en.wikipedia.org/wiki/MOS_Technology_6502
+#include "cpu-6502.h"
+#include <stdio.h>
+#include <stdlib.h> //malloc
+#include <string.h>
 
-CPU Info:man 
-1.79 MHz
-8 bit
+#define MEM_16KB (16*1024)
 
-Registers:
-15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00
-                        |          A          | Accumulator
-                        |          X          | X index
-                        |          Y          | Y index
-| 0  0  0  0  0  0  0  1|         SP          | Stack Pointer
-|                       PC                    | Program Counter
-                        |  N V - B D I Z C    | Processor flags
-
-8-bit Accumulator register
-The Accumulator (A) is the main 8 bit register for loading, storing, comparing, and doing math on data.
-two 8-bit index registers (X and Y)
-The Index Register X (X) is another 8 bit register, usually used for counting or memory access. In loops you will use this register to keep track of how many times the loop has gone, while using A to process data.
-The Index Register Y (Y) works almost the same as X. Some instructions (not covered here) only work with X and not Y.
-The Status Register holds flags with information about the last instruction. For example when doing a subtract you can check if the result was a zero. 
-7 processor status flag bits (P)
-8-bit stack pointer
-16-bit program counter
-
-stack address space is hardwared to memory page $01, ie the address
-range 0x0100-0x01FF (256-511)
-
-Addressing:
-16 bit address space (64KB ram) (NES only has 2KB ram)
-
--no multiple or divide instructions
--no floating point
-
-NES memory map:
-0x0000-0x0799 :RAM
-0x0800-0x0FFF :PPU/APU/Game Cartridge/input devices/etc
-0x1000-0x1800 :Mirrors RAM since some address lines are unwired on NES
-
-$0000-0800 - Internal RAM, 2KB chip in the NES
-$2000-2007 - PPU access ports
-$4000-4017 - Audio and controller access ports
-$6000-7FFF - Optional WRAM inside the game cart
-$8000-FFFF - Game cart ROM
-
-opcodes:
-length 1-3 bytes
-little-endian format
+//
+char* opcode_name[256];
+uint8_t opcode_cycles[256];
+uint8_t opcode_len[256];
+void (*decode_handler[256]) ();
+void (*exec_handler[256]) ();
 
 
-Common Load/Store opcodes
-LDA #$0A   ; LoaD the value 0A into the accumulator A
-           ; the number part of the opcode can be a value or an address
-           ; if the value is zero, the zero flag will be set.
-
-LDX $0000  ; LoaD the value at address $0000 into the index register X
-           ; if the value is zero, the zero flag will be set.
-
-LDY #$FF   ; LoaD the value $FF into the index register Y
-           ; if the value is zero, the zero flag will be set.
-
-STA $2000  ; STore the value from accumulator A into the address $2000
-           ; the number part must be an address
-
-STX $4016  ; STore value in X into $4016
-           ; the number part must be an address
-
-STY $0101  ; STore Y into $0101
-           ; the number part must be an address
-
-TAX        ; Transfer the value from A into X
-           ; if the value is zero, the zero flag will be set
-
-TAY        ; Transfer A into Y
-           ; if the value is zero, the zero flag will be set
-
-TXA        ; Transfer X into A
-           ; if the value is zero, the zero flag will be set
-
-TYA        ; Transfer Y into A
-           ; if the value is zero, the zero flag will be set
-
-
-Common Math opcodes
-
-
-SBC #$80   ; SuBtract with Carry
-           ; A = A - $80 - (1 - carry)
-           ; if the result is zero, the zero flag will be set
-
-CLC        ; CLear Carry flag in status register
-           ; usually this should be done before ADC
-
-SEC        ; SEt Carry flag in status register
-           ; usually this should be done before SBC
-
-INC $0100  ; INCrement value at address $0100
-           ; if the result is zero, the zero flag will be set
-
-DEC $0001  ; DECrement $0001
-           ; if the result is zero, the zero flag will be set
-
-INY        ; INcrement Y register
-           ; if the result is zero, the zero flag will be set
-
-INX        ; INcrement X register
-           ; if the result is zero, the zero flag will be set
-
-DEY        ; DEcrement Y
-           ; if the result is zero, the zero flag will be set
-
-DEX        ; DEcrement X
-           ; if the result is zero, the zero flag will be set
-
-ASL A      ; Arithmetic Shift Left
-           ; shift all bits one position to the left
-           ; this is a multiply by 2
-           ; if the result is zero, the zero flag will be set
-
-LSR $6000  ; Logical Shift Right
-           ; shift all bits one position to the right
-           ; this is a divide by 2
-           ; if the result is zero, the zero flag will be set
-
-
-Common Comparison opcodes
-CMP #$01   ; CoMPare A to the value $01
-           ; this actually does a subtract, but does not keep the result
-           ; instead you check the status register to check for equal, 
-           ; less than, or greater than
-
-CPX $0050  ; ComPare X to the value at address $0050
-
-CPY #$FF   ; ComPare Y to the value $FF
-
-
-Common Control Flow opcodes
-JMP $8000  ; JuMP to $8000, continue running code there
-
-BEQ $FF00  ; Branch if EQual, contnue running code there
-           ; first you would do a CMP, which clears or sets the zero flag
-           ; then the BEQ will check the zero flag
-           ; if zero is set (values were equal) the code jumps to $FF00 and runs there
-           ; if zero is clear (values not equal) there is no jump, runs next instruction
-
-BNE $FF00  ; Branch if Not Equal - opposite above, jump is made when zero flag is clear
-*/
-
-/*
- ADC - Add with Carry
-A,Z,C,N = A+M+C
-
-This instruction adds the contents of a memory location to the accumulator 
-together with the carry bit. If overflow occurs the carry bit is set, this 
-enables multiple byte addition to be performed.
-
-Processor Status after use:
-
-C Carry Flag        : Set if overflow in bit 7
-Z Zero Flag         : Set if A = 0
-I Interrupt Disable : Not affected
-D Decimal Mode Flag : Not affected
-B Break Command     : Not affected
-V Overflow Flag     : Set if sign bit is incorrect
-N Negative Flag     : Set if bit 7 set
-
-Addressing Mode | Opcode | Bytes | Cycles
-Immediate       |   $69  |    2  | 2
-Zero Page       |   $65  |    2  | 3
-Zero Page,X     |   $75  |    2  | 4
-Absolute        |   $6D  |    3  | 4
-Absolute,X      |   $7D  |    3  | 4 (+1 if page crossed)
-Absolute,Y      |   $79  |    3  | 4 (+1 if page crossed)
-(Indirect,X)    |   $61  |    2  | 6
-(Indirect),Y    |   $71  |    2  | 5 (+1 if page crossed)
- */
-
-#define OPCODE(op, len, func)
-OPCODE(0x69, 2, opcode_adc);
-OPCODE(0x65, 2, opcode_adc);
-OPCODE(0x75, 2, opcode_adc);
-OPCODE(0x6D, 3, opcode_adc);
-OPCODE(0x7D, 3, opcode_adc);
-OPCODE(0x79, 3, opcode_adc);
-OPCODE(0x61, 2, opcode_adc);
-OPCODE(0x71, 2, opcode_adc);
-
-void opcode_adc(uint8_t op, uint8_t addr1, uint8_t addr2)
+uint8_t get_proc_status()
 {
-  switch (op)
+  return (regs.status.negative << 7) | 
+         (regs.status.overflow << 6) | 
+         (regs.status.break_cmd << 4) | 
+         (regs.status.decimal << 3) | 
+         (regs.status.interrupt << 2) | 
+         (regs.status.zero << 1) | 
+          regs.status.carry;
+}
+
+void set_proc_status(uint8_t status)
+{
+  // MSB           LSB
+  // [7 6 5 4 3 2 1 0]
+  // [N V - B D I Z C]
+  regs.status.carry     =  status       & 0x01;
+  regs.status.zero      = (status >> 1) & 0x01;
+  regs.status.interrupt = (status >> 2) & 0x01;
+  regs.status.decimal   = (status >> 3) & 0x01;
+  regs.status.break_cmd = (status >> 4) & 0x01;
+  regs.status.overflow  = (status >> 6) & 0x01;
+  regs.status.negative  = (status >> 7) & 0x01;
+}
+
+
+/**
+ for debug/test purposes
+ */
+void set_memory(uint16_t addr, uint8_t value)
+{
+  mem_map[addr] = value;
+}
+
+
+uint8_t get_memory(uint16_t addr)
+{
+  return mem_map[addr];
+}
+
+
+/**
+ */
+void print_regs()
+{
+  // a     x     y
+  // pc    sp    status[N V - B D I Z C]
+  printf("a:0x%x\tx:0x%x\ty:0x%x\n", regs.acc, regs.x, regs.y);
+  printf("pc:0x%x\tsp:0x%x\t[%s %s - %s %s %s %s %s]\n", regs.pc, regs.sp, (regs.status.negative)?"1":"0", (regs.status.overflow)?"1":"0", (regs.status.break_cmd)?"1":"0", (regs.status.decimal)?"1":"0", (regs.status.interrupt)?"1":"0", (regs.status.zero)?"1":"0", (regs.status.carry)?"1":"0");
+  printf("\t\t\t[N O - B D I Z C]\n\n");
+}
+
+
+void cpu_run()
+{
+  while (1)
   {
-    case 0x69:
+    // fetch - next opcode from memory
+    regs.ir = mem_map[regs.pc];
+    //printf("pc=0x%x ir=0x%x\n", reg_pc, reg_ir);
+    print_regs();
+    regs.pc++;
 
+    if (opcode_len[regs.ir] == 0)
+    {
+      printf("unknown opcode 0x%x\n", regs.ir);
       break;
+    }
 
-    case 0x65:
-      break;
+    // decode - see what else the opcode needs
+    if (decode_handler[regs.ir])
+    {
+      decode_handler[regs.ir]();
+    }
 
-    case 0x69:
-      break;
+    // execute
+    if (exec_handler[regs.ir])
+    {
+      exec_handler[regs.ir]();
+    }
 
-    case 0x6d:
-      break;
-
-    case 0x71:
-      break;
-
-    case 0x75:
-      break;
-
-    case 0x79:
-      break;
-
-    case 0x7D:
-      break;
+    // store
   }
+}
+
+
+//////////////////////
+// address handlers //
+//////////////////////
+
+
+/**
+ These instructions have their data defined as the next byte after the opcode. ORA #$B2 will perform a logical 
+ (also called bitwise) of the value B2 with the accumulator. Remember that in assembly when you see a # sign, 
+ it indicates an immediate value. If $B2 was written without a #, it would indicate an address or offset.
+ */
+void addrmode_immediate()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  regs.tl = mem_map[regs.pc++];
+  regs.th = 0;
+}
+
+
+/**
+ Zero-Page is an addressing mode that is only capable of addressing the first 256 bytes of the CPU's memory map. 
+ You can think of it as absolute addressing for the first 256 bytes. The instruction LDA $35 will put the value 
+ stored in memory location $35 into A. The advantage of zero-page are two - the instruction takes one less byte 
+ to specify, and it executes in less CPU cycles. Most programs are written to store the most frequently used 
+ variables in the first 256 memory locations so they can take advantage of zero page addressing.
+ */
+void addrmode_zero_page()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  regs.tl = mem_map[regs.pc++];
+  regs.th = 0;
+}
+
+
+/**
+ This works just like absolute indexed, but the target address is limited to the first 0xFF bytes.
+
+ The target address will wrap around and will always be in the zero page. If the instruction is LDA $C0,X, 
+ and X is $60, then the target address will be $20. $C0+$60 = $120, but the carry is discarded in the 
+ calculation of the target address.
+ */
+void addrmode_zero_page_x()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  regs.tl = (mem_map[regs.pc] + regs.x) & 0xFF;
+  regs.th = 0;
+  regs.pc++;
+}
+
+
+void addrmode_zero_page_y()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  regs.tl = (mem_map[regs.pc] + regs.y) & 0xFF;
+  regs.th = 0;
+  regs.pc++;
+}
+
+
+/**
+ Absolute addressing specifies the memory location explicitly in the two bytes following the opcode. 
+ So JMP $4032 will set the PC to $4032. The hex for this is 4C 32 40. The 6502 is a little endian machine, 
+ so any 16 bit (2 byte) value is stored with the LSB first. All instructions that use absolute addressing are 3 bytes.
+ */
+void addrmode_abs()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  regs.tl = mem_map[regs.pc++];
+  regs.th = mem_map[regs.pc++];
+}
+
+
+/**
+ This addressing mode makes the target address by adding the contents of the X or Y register to an absolute address. 
+ For example, this 6502 code can be used to fill 10 bytes with $FF starting at address $1009, counting down to address $1000.
+   LDA #$FF
+   LDY #$09
+   loop:
+   STA $1000,Y ; absolute indexed addressing
+   DEY
+   BPL loop
+ */
+void addrmode_abs_x()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  uint16_t tmp = mem_map[regs.pc++];
+           tmp |= (mem_map[regs.pc++] << 8);
+           tmp += regs.x;
+
+  regs.tl = tmp & 0xFF;
+  regs.th = (tmp >> 8) & 0xFF;
+}
+
+
+void addrmode_abs_y()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  uint16_t tmp = mem_map[regs.pc++];
+           tmp |= (mem_map[regs.pc++] << 8);
+           tmp += regs.y;
+
+  regs.tl = tmp & 0xFF;
+  regs.th = (tmp >> 8) & 0xFF;
+}
+
+
+/**
+ The JMP instruction is the only instruction that uses this addressing mode. It is a 3 byte instruction - the 2nd 
+ and 3rd bytes are an absolute address. The set the PC to the address stored at that address. So maybe this would be clearer.
+
+   Memory:
+   1000 52 3a 04 d3 93 00 3f 93 84
+
+   Instruction:
+   JMP  ($1000)
+
+   When this instruction is executed, the PC will be set to $3a52, which is the address stored at address $1000.
+ */
+void addrmode_indirect()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  uint16_t tmp = mem_map[regs.pc++];
+           tmp |= mem_map[regs.pc++] << 8;
+
+  regs.tl = mem_map[tmp];
+  regs.th = mem_map[tmp+1];
+}
+
+
+/**
+  This mode is only used with the X register. Consider a situation where the instruction is LDA ($20,X), 
+  X contains $04, and memory at $24 contains 0024: 74 20, First, X is added to $20 to get $24. The target 
+  address will be fetched from $24 resulting in a target address of $2074. Register A will be loaded with 
+  the contents of memory at $2074.
+
+  If X + the immediate byte will wrap around to a zero-page address. So you could code that like 
+  targetAddress = (X + opcode[1]) & 0xFF .
+
+  Indexed Indirect instructions are 2 bytes - the second byte is the zero-page address - $20 in the example. 
+  Obviously the fetched address has to be stored in the zero page.
+ */
+void addrmode_indexed_indirect_x()
+{
+  // the fetched address has to be in the zero page since it is only 1 byte. the final address will be 16 bits.
+
+  printf("%s: 0x%x\n", __func__, regs.pc);
+  uint8_t zpage = (mem_map[regs.pc++] + regs.x) & 0xFF;
+
+  regs.tl = mem_map[zpage];
+  regs.th = mem_map[zpage+1];
+}
+
+
+/**
+ This mode is only used with the Y register. It differs in the order that Y is applied to the indirectly 
+ fetched address. An example instruction that uses indirect index addressing is LDA ($86),Y . To calculate 
+ the target address, the CPU will first fetch the address stored at zero page location $86. That address 
+ will be added to register Y to get the final target address. For LDA ($86),Y, if the address stored 
+ at $86 is $4028 (memory is 0086: 28 40, remember little endian) and register Y contains $10, then the final 
+ target address would be $4038. Register A will be loaded with the contents of memory at $4038.
+
+ Indirect Indexed instructions are 2 bytes - the second byte is the zero-page address - $20 in the example. 
+ (So the fetched address has to be stored in the zero page.)
+
+ While indexed indirect addressing will only generate a zero-page address, this mode's target address is 
+ not wrapped - it can be anywhere in the 16-bit address space.
+ */
+void addrmode_indirect_indexed_y()
+{
+  printf("%s: 0x%x\n", __func__, regs.pc);
+
+  // get the second byte of opcode (which is a zero page address)
+  uint8_t zpage = mem_map[regs.pc++];
+  // get 16 bit value at zero page address
+  uint16_t tmp = (mem_map[zpage] | (mem_map[zpage+1] << 8)) + regs.y;
+
+  regs.tl = tmp & 0xFF;
+  regs.th = (tmp >> 8) & 0xFF;
+}
+
+
+/////////////
+// opcodes //
+/////////////
+
+
+void opcode_adc()
+{
+  // adjust the ACC register and set carry flag
+  if ((regs.acc + regs.status.carry + regs.tl) > 0xff)
+  {
+    regs.acc += regs.status.carry + regs.tl;
+    regs.status.carry = 1;
+  }
+  else
+  {
+    regs.acc += regs.status.carry + regs.tl;
+    regs.status.carry = 0;
+  }
+
+  // TODO : finish
+
+  // set zero flag
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+
+  // set overflow
+
+  // set negative
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_and()
+{
+  regs.acc &= regs.tl;
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_asl()
+{// TODO : finish
+}
+
+
+void opcode_bcc()
+{// TODO : finish
+}
+
+
+void opcode_bcs()
+{// TODO : finish
+}
+
+
+void opcode_beq()
+{// TODO : finish
+}
+
+
+void opcode_bit()
+{
+  uint8_t test = mem_map[regs.tl | (regs.th << 8)] & regs.acc;
+
+  // set flags
+  regs.status.zero = (test==0) ? 1 : 0;
+  regs.status.overflow = (test & 0x40) ? 1 : 0;
+  regs.status.negative = (test & 0x80) ? 1 : 0;
+}
+
+
+void opcode_bmi()
+{// TODO : finish
+}
+
+
+void opcode_bne()
+{// TODO : finish
+}
+
+
+void opcode_bpl()
+{// TODO : finish
+}
+
+
+void opcode_brk()
+{// TODO : finish
+}
+
+
+void opcode_bvc()
+{// TODO : finish
+}
+
+
+void opcode_bvs()
+{// TODO : finish
+}
+
+
+void opcode_clc()
+{
+  regs.status.carry = 0;
+}
+
+
+void opcode_cld()
+{
+  regs.status.decimal = 0;
+}
+
+
+void opcode_cli()
+{
+  regs.status.interrupt = 0;
+}
+
+
+void opcode_clv()
+{
+  regs.status.overflow = 0;
+}
+
+
+void opcode_cmp()
+{
+  // assumes the value from memory to compare is loaded into regs.tl
+  int8_t result = regs.acc - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.carry = (result >= 0) ? 1 : 0;
+  regs.status.zero = (result == 0) ? 1 : 0;
+  regs.status.negative = (result & 0x80) ? 1 : 0;
+}
+
+
+void opcode_cpx()
+{
+  int8_t result = regs.x - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.carry = (result >= 0) ? 1 : 0;
+  regs.status.zero = (result == 0) ? 1 : 0;
+  regs.status.negative = (result & 0x80) ? 1 : 0;
+}
+
+
+void opcode_cpy()
+{
+  int8_t result = regs.y - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.carry = (result >= 0) ? 1 : 0;
+  regs.status.zero = (result == 0) ? 1 : 0;
+  regs.status.negative = (result & 0x80) ? 1 : 0;
+}
+
+
+void opcode_dec()
+{
+  uint8_t result = mem_map[regs.tl | (regs.th << 8)] - 1;
+  mem_map[regs.tl | (regs.th << 8)] = result;
+
+  // set flags
+  regs.status.zero = (result==0) ? 1 : 0;
+  regs.status.negative = (result & 0x80) ? 1 : 0;
+}
+
+
+void opcode_dex()
+{
+  regs.x--;
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_dey()
+{
+  regs.y--;
+
+  // set flags
+  regs.status.zero = (regs.y==0) ? 1 : 0;
+  regs.status.negative = (regs.y & 0x80) ? 1 : 0;
+}
+
+
+void opcode_eor()
+{
+  regs.acc ^= mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_inc()
+{
+  uint8_t result = mem_map[regs.tl | (regs.th << 8)] + 1;
+  mem_map[regs.tl | (regs.th << 8)] = result;
+
+  // set flags
+  regs.status.zero = (result==0) ? 1 : 0;
+  regs.status.negative = (result & 0x80) ? 1 : 0;
+}
+
+
+void opcode_inx()
+{
+  regs.x++;
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_iny()
+{
+  regs.y++;
+
+  // set flags
+  regs.status.zero = (regs.y==0) ? 1 : 0;
+  regs.status.negative = (regs.y & 0x80) ? 1 : 0;
+}
+
+
+void opcode_jmp()
+{
+  // TODO : finish
+  regs.pc = (regs.th << 8) | regs.tl;
+}
+
+
+void opcode_jsr()
+{// TODO : finish
+
+  // push address onto stack
+  //
+
+  // set program counter
+  //
+}
+
+
+void opcode_lda()
+{
+  regs.acc = mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_ldx()
+{
+  regs.x = mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_ldy()
+{
+  regs.y = mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.zero = (regs.y==0) ? 1 : 0;
+  regs.status.negative = (regs.y & 0x80) ? 1 : 0;
+}
+
+
+// void opcode_lsr()
+// {// TODO : finish
+// }
+
+
+void opcode_nop()
+{
+}
+
+
+void opcode_ora()
+{
+  regs.acc |= mem_map[regs.tl | (regs.th << 8)];
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_pha()
+{
+  // push onto stack; decrement
+  mem_map[regs.sp] = regs.acc;
+  regs.sp--;
+}
+
+
+void opcode_php()
+{
+  // push onto stack; decrement
+  mem_map[regs.sp] = get_proc_status();
+  regs.sp--;
+}
+
+
+void opcode_pla()
+{
+  // increment sp; then grab value
+  regs.sp++;
+  regs.acc = mem_map[regs.sp];
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_plp()
+{
+  // increment sp; then grab value
+  regs.sp++;
+  set_proc_status(mem_map[regs.sp]);
+}
+
+
+// void opcode_rol(uint8_t op, uint8_t v1, uint8_t v2)
+// {// TODO : finish
+// }
+
+
+// void opcode_ror(uint8_t op, uint8_t v1, uint8_t v2)
+// {// TODO : finish
+// }
+
+
+// void opcode_rti(uint8_t op, uint8_t v1, uint8_t v2)
+// {// TODO : finish
+// }
+
+
+// void opcode_rts(uint8_t op, uint8_t v1, uint8_t v2)
+// {// TODO : finish
+// }
+
+
+// void opcode_sbc(uint8_t op, uint8_t v1, uint8_t v2)
+// {// TODO : finish
+// }
+
+
+void opcode_sec()
+{
+  regs.status.carry = 1;
+}
+
+
+void opcode_sed()
+{
+  regs.status.decimal = 1;
+}
+
+
+void opcode_sei()
+{
+  regs.status.interrupt = 1;
+}
+
+
+void opcode_sta()
+{
+  mem_map[(regs.th << 8) | regs.tl] = regs.acc;
+}
+
+
+void opcode_stx()
+{
+  mem_map[(regs.th << 8) | regs.tl] = regs.x;
+}
+
+
+void opcode_sty()
+{
+  mem_map[(regs.th << 8) | regs.tl] = regs.y;
+}
+
+
+void opcode_tax()
+{
+  regs.x = regs.acc;
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_txa()
+{
+  regs.acc = regs.x;
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_tay()
+{
+  regs.y = regs.acc;
+
+  // set flags
+  regs.status.zero = (regs.y==0) ? 1 : 0;
+  regs.status.negative = (regs.y & 0x80) ? 1 : 0;
+}
+
+
+void opcode_tya()
+{
+  regs.acc = regs.y;
+
+  // set flags
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+}
+
+
+void opcode_tsx()
+{
+  regs.x = regs.sp;
+
+  // set flags
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
+
+
+void opcode_txs()
+{ // S = X
+  regs.sp = regs.x;
+}
+
+
+#define OPCODE(op, name, len, cycles, exec, decode) opcode_name[op] = name; \
+                                                    opcode_len[op] = len; \
+                                                    opcode_cycles[op] = cycles; \
+                                                    exec_handler[op] = exec; \
+                                                    decode_handler[op] = decode;
+
+void cpu_init()
+{
+  // zero out stuff
+  memset(opcode_name, 0, 256);
+  memset(opcode_cycles, 0, 256);
+  memset(opcode_len, 0, 256);
+  memset(decode_handler, 0, sizeof(void*) * 256);
+  memset(exec_handler, 0, sizeof(void*) * 256);
+
+  OPCODE(0x69, "adc", 2, 2, opcode_adc, addrmode_immediate)
+  OPCODE(0x65, "adc", 2, 3, opcode_adc, addrmode_zero_page)
+  OPCODE(0x75, "adc", 2, 4, opcode_adc, addrmode_zero_page_x)
+  OPCODE(0x6D, "adc", 3, 4, opcode_adc, addrmode_abs)
+  OPCODE(0x7D, "adc", 3, 4, opcode_adc, addrmode_abs_x)
+  OPCODE(0x79, "adc", 3, 4, opcode_adc, addrmode_abs_y)
+  OPCODE(0x61, "adc", 2, 6, opcode_adc, addrmode_indexed_indirect_x)
+  OPCODE(0x71, "adc", 2, 5, opcode_adc, addrmode_indirect_indexed_y)
+
+  OPCODE(0x29, "and", 2, 2, opcode_and, addrmode_immediate)
+  OPCODE(0x25, "and", 2, 3, opcode_and, addrmode_zero_page)
+  OPCODE(0x35, "and", 2, 4, opcode_and, addrmode_zero_page_x)
+  OPCODE(0x2d, "and", 3, 4, opcode_and, addrmode_abs)
+  OPCODE(0x3d, "and", 3, 4, opcode_and, addrmode_abs_x)
+  OPCODE(0x39, "and", 3, 4, opcode_and, addrmode_abs_y)
+  OPCODE(0x21, "and", 2, 6, opcode_and, addrmode_indexed_indirect_x)
+  OPCODE(0x31, "and", 2, 5, opcode_and, addrmode_indirect_indexed_y)
+
+  // OPCODE(0x0a, "asl", 1, 2, opcode_asl)
+  // OPCODE(0x06, "asl", 2, 5, opcode_asl)
+  // OPCODE(0x16, "asl", 2, 6, opcode_asl)
+  // OPCODE(0x0e, "asl", 3, 6, opcode_asl)
+  // OPCODE(0x1e, "asl", 3, 7, opcode_asl)
+
+  // OPCODE(0x90, "bcc", 2, 2, opcode_bcc)
+
+  // OPCODE(0xb0, "bcs", 2, 2, opcode_bcs)
+
+  // OPCODE(0xf0, "beq", 2, 2, opcode_beq)
+
+  OPCODE(0x24, "bit", 2, 3, opcode_bit, addrmode_zero_page)
+  OPCODE(0x2c, "bit", 3, 4, opcode_bit, addrmode_abs)
+
+  // OPCODE(0x30, "bmi", 2, 2, opcode_bmi)
+
+  // OPCODE(0xd0, "bne", 2, 2, opcode_bne)
+
+  // OPCODE(0x10, "bpl", 2, 2, opcode_bpl)
+
+  // OPCODE(0x00, "brk", 1, 7, opcode_brk)
+
+  // OPCODE(0x50, "bvc", 2, 2, opcode_bvc)
+
+  // OPCODE(0x70, "bvs", 2, 2, opcode_bvs)
+
+  OPCODE(0x18, "clc", 1, 2, opcode_clc, NULL)
+
+  OPCODE(0xd8, "cld", 1, 2, opcode_cld, NULL)
+
+  OPCODE(0x58, "cli", 1, 2, opcode_cli, NULL)
+
+  OPCODE(0xb8, "clv", 1, 2, opcode_clv, NULL)
+
+  OPCODE(0xc9, "cmp", 2, 2, opcode_cmp, addrmode_immediate)
+  OPCODE(0xc5, "cmp", 2, 3, opcode_cmp, addrmode_zero_page)
+  OPCODE(0xd5, "cmp", 2, 4, opcode_cmp, addrmode_zero_page_x)
+  OPCODE(0xcd, "cmp", 3, 4, opcode_cmp, addrmode_abs)
+  OPCODE(0xdd, "cmp", 3, 4, opcode_cmp, addrmode_abs_x)
+  OPCODE(0xd9, "cmp", 3, 4, opcode_cmp, addrmode_abs_y)
+  OPCODE(0xc1, "cmp", 2, 6, opcode_cmp, addrmode_indexed_indirect_x)
+  OPCODE(0xd1, "cmp", 2, 5, opcode_cmp, addrmode_indirect_indexed_y)
+
+  OPCODE(0xe0, "cpx", 2, 2, opcode_cpx, addrmode_immediate)
+  OPCODE(0xe4, "cpx", 2, 3, opcode_cpx, addrmode_zero_page)
+  OPCODE(0xec, "cpx", 3, 4, opcode_cpx, addrmode_abs)
+
+  OPCODE(0xc0, "cpy", 2, 2, opcode_cpy, addrmode_immediate)
+  OPCODE(0xc4, "cpy", 2, 3, opcode_cpy, addrmode_zero_page)
+  OPCODE(0xcc, "cpy", 3, 4, opcode_cpy, addrmode_abs)
+  
+  OPCODE(0xc6, "dec", 2, 5, opcode_dec, addrmode_zero_page)
+  OPCODE(0xd6, "dec", 2, 6, opcode_dec, addrmode_zero_page_x)
+  OPCODE(0xce, "dec", 3, 6, opcode_dec, addrmode_abs)
+  OPCODE(0xde, "dec", 3, 7, opcode_dec, addrmode_abs_x)
+
+  OPCODE(0xca, "dex", 1, 2, opcode_dex, NULL)
+  
+  OPCODE(0x88, "dey", 1, 2, opcode_dey, NULL)
+
+  OPCODE(0x49, "eor", 2, 2, opcode_eor, addrmode_immediate)
+  OPCODE(0x45, "eor", 2, 3, opcode_eor, addrmode_zero_page)
+  OPCODE(0x55, "eor", 2, 4, opcode_eor, addrmode_zero_page_x)
+  OPCODE(0x4d, "eor", 3, 4, opcode_eor, addrmode_abs)
+  OPCODE(0x5d, "eor", 3, 4, opcode_eor, addrmode_abs_x)
+  OPCODE(0x59, "eor", 3, 4, opcode_eor, addrmode_abs_y)
+  OPCODE(0x41, "eor", 2, 6, opcode_eor, addrmode_indexed_indirect_x)
+  OPCODE(0x51, "eor", 2, 5, opcode_eor, addrmode_indirect_indexed_y)
+
+  OPCODE(0xe6, "inc", 2, 5, opcode_inc, addrmode_zero_page)
+  OPCODE(0xf6, "inc", 2, 6, opcode_inc, addrmode_zero_page_x)
+  OPCODE(0xee, "inc", 3, 6, opcode_inc, addrmode_abs)
+  OPCODE(0xfe, "inc", 3, 7, opcode_inc, addrmode_abs_x)
+
+  OPCODE(0xe8, "inx", 1, 2, opcode_inx, NULL)
+  OPCODE(0xc8, "iny", 1, 2, opcode_iny, NULL)
+
+  OPCODE(0x4c, "jmp", 3, 3, opcode_jmp, addrmode_abs)
+  OPCODE(0x6c, "jmp", 3, 5, opcode_jmp, addrmode_indirect)
+
+  // OPCODE(0x20, "jsr", 3, 6, opcode_jsr)
+
+  OPCODE(0xa9, "lda", 2, 2, opcode_lda, addrmode_immediate)
+  OPCODE(0xa5, "lda", 2, 3, opcode_lda, addrmode_zero_page)
+  OPCODE(0xb5, "lda", 2, 4, opcode_lda, addrmode_zero_page_x)
+  OPCODE(0xad, "lda", 3, 4, opcode_lda, addrmode_abs)
+  OPCODE(0xbd, "lda", 3, 4, opcode_lda, addrmode_abs_x)
+  OPCODE(0xb9, "lda", 3, 4, opcode_lda, addrmode_abs_y)
+  OPCODE(0xa1, "lda", 2, 6, opcode_lda, addrmode_indexed_indirect_x)
+  OPCODE(0xb1, "lda", 2, 5, opcode_lda, addrmode_indirect_indexed_y)
+
+  OPCODE(0xa2, "ldx", 2, 2, opcode_ldx, addrmode_immediate)
+  OPCODE(0xa6, "ldx", 2, 3, opcode_ldx, addrmode_zero_page)
+  OPCODE(0xb6, "ldx", 2, 4, opcode_ldx, addrmode_zero_page_y)
+  OPCODE(0xae, "ldx", 3, 4, opcode_ldx, addrmode_abs)
+  OPCODE(0xbe, "ldx", 3, 4, opcode_ldx, addrmode_abs_y)
+
+  OPCODE(0xa0, "ldy", 2, 2, opcode_ldy, addrmode_immediate)
+  OPCODE(0xa4, "ldy", 2, 3, opcode_ldy, addrmode_zero_page)
+  OPCODE(0xb4, "ldy", 2, 4, opcode_ldy, addrmode_zero_page_x)
+  OPCODE(0xac, "ldy", 3, 4, opcode_ldy, addrmode_abs)
+  OPCODE(0xbc, "ldy", 3, 4, opcode_ldy, addrmode_abs_x)
+
+  // OPCODE(0x4a, "lsr", 1, 2, opcode_lsr)
+  // OPCODE(0x46, "lsr", 2, 5, opcode_lsr)
+  // OPCODE(0x56, "lsr", 2, 6, opcode_lsr)
+  // OPCODE(0x4e, "lsr", 3, 6, opcode_lsr)
+  // OPCODE(0x5e, "lsr", 3, 7, opcode_lsr)
+
+  OPCODE(0xea, "nop", 1, 2, opcode_nop, NULL)
+
+  OPCODE(0x09, "ora", 2, 2, opcode_ora, addrmode_immediate)
+  OPCODE(0x05, "ora", 2, 3, opcode_ora, addrmode_zero_page)
+  OPCODE(0x15, "ora", 2, 4, opcode_ora, addrmode_zero_page_x)
+  OPCODE(0x0d, "ora", 3, 4, opcode_ora, addrmode_abs)
+  OPCODE(0x1d, "ora", 3, 4, opcode_ora, addrmode_abs_x)
+  OPCODE(0x19, "ora", 3, 4, opcode_ora, addrmode_abs_y)
+  OPCODE(0x01, "ora", 2, 6, opcode_ora, addrmode_indexed_indirect_x)
+  OPCODE(0x11, "ora", 2, 5, opcode_ora, addrmode_indirect_indexed_y)
+
+  OPCODE(0x48, "pha", 1, 3, opcode_pha, NULL)
+  OPCODE(0x08, "php", 1, 3, opcode_php, NULL)
+  OPCODE(0x68, "pla", 1, 4, opcode_pla, NULL)
+  OPCODE(0x28, "plp", 1, 4, opcode_plp, NULL)
+
+  // OPCODE(0x2a, "rol", 1, 2, opcode_rol)
+  // OPCODE(0x26, "rol", 2, 5, opcode_rol)
+  // OPCODE(0x36, "rol", 2, 6, opcode_rol)
+  // OPCODE(0x2e, "rol", 3, 6, opcode_rol)
+  // OPCODE(0x3e, "rol", 3, 7, opcode_rol)
+
+  // OPCODE(0x6a, "ror", 1, 2, opcode_ror)
+  // OPCODE(0x66, "ror", 2, 5, opcode_ror)
+  // OPCODE(0x76, "ror", 2, 6, opcode_ror)
+  // OPCODE(0x6e, "ror", 3, 6, opcode_ror)
+  // OPCODE(0x7e, "ror", 3, 7, opcode_ror)
+
+  // OPCODE(0x40, "rti", 1, 6, opcode_rti)
+
+  // OPCODE(0x60, "rts", 1, 6, opcode_rts)
+
+  // OPCODE(0xe9, "sbc", 2, 2, opcode_sbc)
+  // OPCODE(0xe5, "sbc", 2, 3, opcode_sbc)
+  // OPCODE(0xf5, "sbc", 2, 4, opcode_sbc)
+  // OPCODE(0xed, "sbc", 3, 4, opcode_sbc)
+  // OPCODE(0xfd, "sbc", 3, 4, opcode_sbc)
+  // OPCODE(0xf9, "sbc", 3, 4, opcode_sbc)
+  // OPCODE(0xe1, "sbc", 2, 6, opcode_sbc)
+  // OPCODE(0xf1, "sbc", 2, 5, opcode_sbc)
+
+  OPCODE(0x38, "sec", 1, 2, opcode_sec, NULL)
+
+  OPCODE(0xf8, "sed", 1, 2, opcode_sed, NULL)
+
+  OPCODE(0x78, "sei", 1, 2, opcode_sei, NULL)
+
+  OPCODE(0x85, "sta", 2, 3, opcode_sta, addrmode_zero_page)
+  OPCODE(0x95, "sta", 2, 4, opcode_sta, addrmode_zero_page_x)
+  OPCODE(0x8d, "sta", 3, 4, opcode_sta, addrmode_abs)
+  OPCODE(0x9d, "sta", 3, 5, opcode_sta, addrmode_abs_x)
+  OPCODE(0x99, "sta", 3, 5, opcode_sta, addrmode_abs_y)
+  OPCODE(0x81, "sta", 2, 6, opcode_sta, addrmode_indexed_indirect_x)
+  OPCODE(0x91, "sta", 2, 6, opcode_sta, addrmode_indirect_indexed_y)
+
+  OPCODE(0x86, "stx", 2, 3, opcode_stx, addrmode_zero_page)
+  OPCODE(0x96, "stx", 2, 4, opcode_stx, addrmode_zero_page_y)
+  OPCODE(0x8e, "stx", 3, 4, opcode_stx, addrmode_abs)
+
+  OPCODE(0x84, "sty", 2, 3, opcode_sty, addrmode_zero_page)
+  OPCODE(0x94, "sty", 2, 4, opcode_sty, addrmode_zero_page_x)
+  OPCODE(0x8c, "sty", 3, 4, opcode_sty, addrmode_abs)
+
+  OPCODE(0xaa, "tax", 1, 2, opcode_tax, NULL)
+  OPCODE(0x8a, "txa", 1, 2, opcode_txa, NULL)
+
+  OPCODE(0xa8, "tay", 1, 2, opcode_tay, NULL)
+  OPCODE(0x98, "tya", 1, 2, opcode_tya, NULL)
+
+  OPCODE(0xba, "tsx", 1, 2, opcode_tsx, NULL)
+  OPCODE(0x9a, "txs", 1, 2, opcode_txs, NULL)
+}
+
+
+/**
+ * load PRG ROM into memory at 0x8000. if there is only one page, then load 
+ * at both 0x8000 and 0xc000; otherwise load two pages worth.
+ */
+void cpu_load_prg(const uint8_t* prg, uint8_t numblk)
+{
+  if (numblk == 1)
+  {
+    printf("memcpy 1 block to 0x8000 and 0xC000\n");
+    memcpy(&(mem_map[0x8000]), prg, MEM_16KB);
+    memcpy(&(mem_map[0xC000]), prg, MEM_16KB);
+  }
+  else
+  {
+    printf("memcpy 2 blocks\n");
+    memcpy(&mem_map[0x8000], prg, 2*MEM_16KB);
+  }
+}
+
+
+/*
+ * reset will set pc to 0xfffc and 0xfffd
+ */
+void cpu_reset()
+{
+  regs.pc = (mem_map[0xfffd]<<8) | mem_map[0xfffc];
+  printf("reset pc=0x%x\n\n", regs.pc);
+
+  // TODO
 }

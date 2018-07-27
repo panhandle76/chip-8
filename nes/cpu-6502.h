@@ -29,8 +29,11 @@ struct proc_regs_t
   uint8_t  y;
   struct proc_status_t status;
   uint8_t  ir; // instruction register
-  uint8_t  tl; // temp. register (lower half). holds operand during decode step
-  uint8_t  th; // temp. register (upper half). holds operand during decode step
+  /// registers to temporarily hold addresses. holds address during decode step for all non immediate address mode
+  uint8_t  tl;
+  uint8_t  th;
+  // input data latch register
+  uint8_t idl;
 };
 
 // locals
@@ -42,10 +45,11 @@ uint8_t get_proc_status();
 void set_proc_status(uint8_t status);
 
 void set_memory(uint16_t addr, uint8_t value);
+void set_memory_range(uint16_t addr, uint8_t *buffer, uint8_t size);
 
 uint8_t get_memory(uint16_t addr);
 
-void cpu_run();
+void cpu_step();
 
 void cpu_init();
 
@@ -77,23 +81,10 @@ void addrmode_indirect_indexed_y();
 
 //////////////////////////
 
-void opcode_clc();
-void opcode_cld();
-void opcode_cli();
-void opcode_clv();
+// void opcode_sec();
+// void opcode_sed();
+// void opcode_sei();
 
-void opcode_cmp();
-void opcode_cpx();
-void opcode_cpy();
-
-void opcode_dec();
-void opcode_dex();
-void opcode_dey();
-
-void opcode_sec();
-void opcode_sed();
-void opcode_sei();
-
-void opcode_sta();
-void opcode_stx();
-void opcode_sty();
+// void opcode_sta();
+// void opcode_stx();
+// void opcode_sty();

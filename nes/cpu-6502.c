@@ -48,6 +48,13 @@ void set_memory(uint16_t addr, uint8_t value)
 }
 
 
+void set_memory_range(uint16_t addr, uint8_t *buffer, uint8_t size)
+{
+  for (int i=0; i<size; i++)
+    mem_map[addr+i] = buffer[i];
+}
+
+
 uint8_t get_memory(uint16_t addr)
 {
   return mem_map[addr];
@@ -65,21 +72,17 @@ void print_regs()
   printf("\t\t\t[N O - B D I Z C]\n\n");
 }
 
-
-void cpu_run()
+void cpu_step()
 {
-  while (1)
-  {
-    // fetch - next opcode from memory
+  // fetch - next opcode from memory
     regs.ir = mem_map[regs.pc];
-    //printf("pc=0x%x ir=0x%x\n", reg_pc, reg_ir);
     print_regs();
     regs.pc++;
 
     if (opcode_len[regs.ir] == 0)
     {
       printf("unknown opcode 0x%x\n", regs.ir);
-      break;
+      return;
     }
 
     // decode - see what else the opcode needs
@@ -93,6 +96,17 @@ void cpu_run()
     {
       exec_handler[regs.ir]();
     }
+}
+
+void cpu_run()
+{
+  while (1)
+  {
+    cpu_step();
+
+    // if break command is set then stop
+    if (regs.status.break_cmd)
+      return;
 
     // store
   }
@@ -126,7 +140,7 @@ void addrmode_immediate()
  */
 void addrmode_zero_page()
 {
-  printf("%s: 0x%x\n", __func__, regs.pc);
+  printf("%s: pc:0x%x\n", __func__, regs.pc);
   regs.tl = mem_map[regs.pc++];
   regs.th = 0;
 }
@@ -141,7 +155,7 @@ void addrmode_zero_page()
  */
 void addrmode_zero_page_x()
 {
-  printf("%s: 0x%x\n", __func__, regs.pc);
+  printf("%s: pc:0x%x\n", __func__, regs.pc);
   regs.tl = (mem_map[regs.pc] + regs.x) & 0xFF;
   regs.th = 0;
   regs.pc++;
@@ -150,7 +164,7 @@ void addrmode_zero_page_x()
 
 void addrmode_zero_page_y()
 {
-  printf("%s: 0x%x\n", __func__, regs.pc);
+  printf("%s: pc:0x%x\n", __func__, regs.pc);
   regs.tl = (mem_map[regs.pc] + regs.y) & 0xFF;
   regs.th = 0;
   regs.pc++;
@@ -165,6 +179,7 @@ void addrmode_zero_page_y()
 void addrmode_abs()
 {
   printf("%s: 0x%x\n", __func__, regs.pc);
+  // get the next two bytes after opcode. this is the address to read
   regs.tl = mem_map[regs.pc++];
   regs.th = mem_map[regs.pc++];
 }
@@ -368,6 +383,7 @@ void opcode_bpl()
 
 void opcode_brk()
 {// TODO : finish
+  regs.status.break_cmd = 1;
 }
 
 
@@ -408,7 +424,11 @@ void opcode_clv()
 void opcode_cmp()
 {
   // assumes the value from memory to compare is loaded into regs.tl
-  int8_t result = regs.acc - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+  int8_t result;
+  if (regs.ir == 0xc9)
+    result = regs.acc - regs.tl;
+  else
+    result = regs.acc - mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.carry = (result >= 0) ? 1 : 0;
@@ -419,7 +439,11 @@ void opcode_cmp()
 
 void opcode_cpx()
 {
-  int8_t result = regs.x - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+  int8_t result;
+  if (regs.ir == 0xe0)
+    result = regs.x - regs.tl;
+  else
+    result = regs.x - mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.carry = (result >= 0) ? 1 : 0;
@@ -430,7 +454,11 @@ void opcode_cpx()
 
 void opcode_cpy()
 {
-  int8_t result = regs.y - regs.tl;//mem_map[regs.tl | (regs.th << 8)];
+  int8_t result;
+  if (regs.ir == 0xc0)
+    result = regs.y - regs.tl;
+  else
+    result = regs.y - mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.carry = (result >= 0) ? 1 : 0;
@@ -472,7 +500,11 @@ void opcode_dey()
 
 void opcode_eor()
 {
-  regs.acc ^= mem_map[regs.tl | (regs.th << 8)];
+  // if immediate value use it; otherwise read memory???? TODO THIS MAY BE BAD TO DO
+  if (regs.ir == 0x49)
+    regs.acc ^= regs.tl;
+  else
+    regs.acc ^= mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.zero = (regs.acc==0) ? 1 : 0;
@@ -786,7 +818,7 @@ void cpu_init()
 
   // OPCODE(0x10, "bpl", 2, 2, opcode_bpl)
 
-  // OPCODE(0x00, "brk", 1, 7, opcode_brk)
+  OPCODE(0x00, "brk", 1, 7, opcode_brk, NULL)
 
   // OPCODE(0x50, "bvc", 2, 2, opcode_bvc)
 

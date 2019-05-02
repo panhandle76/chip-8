@@ -67,7 +67,7 @@ void print_regs()
 {
   // a     x     y
   // pc    sp    status[N V - B D I Z C]
-  printf("a:0x%x\tx:0x%x\ty:0x%x\n", regs.acc, regs.x, regs.y);
+  printf("acc:0x%x\tx:0x%x\ty:0x%x\n", regs.acc, regs.x, regs.y);
   printf("pc:0x%x\tsp:0x%x\t[%s %s - %s %s %s %s %s]\n", regs.pc, regs.sp, (regs.status.negative)?"1":"0", (regs.status.overflow)?"1":"0", (regs.status.break_cmd)?"1":"0", (regs.status.decimal)?"1":"0", (regs.status.interrupt)?"1":"0", (regs.status.zero)?"1":"0", (regs.status.carry)?"1":"0");
   printf("\t\t\t[N O - B D I Z C]\n\n");
 }
@@ -256,10 +256,8 @@ void addrmode_indirect()
  */
 void addrmode_indexed_indirect_x()
 {
-  // the fetched address has to be in the zero page since it is only 1 byte. the final address will be 16 bits.
-
-  printf("%s: 0x%x\n", __func__, regs.pc);
   uint8_t zpage = (mem_map[regs.pc++] + regs.x) & 0xFF;
+  printf("%s: 0x%x\n", __func__, zpage);
 
   regs.tl = mem_map[zpage];
   regs.th = mem_map[zpage+1];
@@ -282,12 +280,9 @@ void addrmode_indexed_indirect_x()
  */
 void addrmode_indirect_indexed_y()
 {
-  printf("%s: 0x%x\n", __func__, regs.pc);
-
-  // get the second byte of opcode (which is a zero page address)
   uint8_t zpage = mem_map[regs.pc++];
-  // get 16 bit value at zero page address
   uint16_t tmp = (mem_map[zpage] | (mem_map[zpage+1] << 8)) + regs.y;
+  printf("%s: 0x%x\n", __func__, tmp);
 
   regs.tl = tmp & 0xFF;
   regs.th = (tmp >> 8) & 0xFF;
@@ -563,7 +558,10 @@ void opcode_jsr()
 
 void opcode_lda()
 {
-  regs.acc = mem_map[regs.tl | (regs.th << 8)];
+  if (regs.ir == 0xa9)
+    regs.acc = regs.tl;
+  else
+    regs.acc = mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.zero = (regs.acc==0) ? 1 : 0;
@@ -573,7 +571,10 @@ void opcode_lda()
 
 void opcode_ldx()
 {
-  regs.x = mem_map[regs.tl | (regs.th << 8)];
+  if (regs.ir == 0xa2)
+    regs.x = regs.tl;
+  else
+    regs.x = mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.zero = (regs.x==0) ? 1 : 0;
@@ -583,7 +584,10 @@ void opcode_ldx()
 
 void opcode_ldy()
 {
-  regs.y = mem_map[regs.tl | (regs.th << 8)];
+  if (regs.ir == 0xa0)
+    regs.y = regs.tl;
+  else
+    regs.y = mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.zero = (regs.y==0) ? 1 : 0;
@@ -591,9 +595,28 @@ void opcode_ldy()
 }
 
 
-// void opcode_lsr()
-// {// TODO : finish
-// }
+void opcode_lsr()
+{
+  if (regs.ir == 0x4a)
+  {
+    regs.status.carry = regs.acc & 0x1;
+    regs.acc = ((regs.acc >> 1) & 0x7f);
+
+    // set flags
+    regs.status.zero = (regs.acc == 0) ? 1 : 0;
+    regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
+  }
+  else
+  {
+    uint16_t addr = regs.tl | (regs.th << 8);
+    regs.status.carry = mem_map[addr] & 0x1;
+    mem_map[addr] = (mem_map[addr] >> 1) & 0x7f;
+
+    // set flags
+    regs.status.zero = (mem_map[addr] == 0) ? 1 : 0;
+    regs.status.negative = (mem_map[addr] & 0x80) ? 1 : 0;
+  }
+}
 
 
 void opcode_nop()
@@ -603,7 +626,10 @@ void opcode_nop()
 
 void opcode_ora()
 {
-  regs.acc |= mem_map[regs.tl | (regs.th << 8)];
+  if (regs.ir == 0x09)
+    regs.acc |= regs.tl;
+  else
+    regs.acc |= mem_map[regs.tl | (regs.th << 8)];
 
   // set flags
   regs.status.zero = (regs.acc==0) ? 1 : 0;
@@ -634,8 +660,8 @@ void opcode_pla()
   regs.acc = mem_map[regs.sp];
 
   // set flags
-  regs.status.zero = (regs.x==0) ? 1 : 0;
-  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+  regs.status.zero = (regs.acc==0) ? 1 : 0;
+  regs.status.negative = (regs.acc & 0x80) ? 1 : 0;
 }
 
 
@@ -667,9 +693,17 @@ void opcode_plp()
 // }
 
 
-// void opcode_sbc(uint8_t op, uint8_t v1, uint8_t v2)
-// {// TODO : finish
-// }
+void opcode_sbc()
+{// TODO finish
+  uint8_t m = mem_map[(regs.th << 8) | regs.tl];
+  int16_t result = regs.acc - m - (1-regs.status.carry);
+
+  // set flags
+  regs.status.carry = (result & 0x100) ? 1 : 0; // set flag if the value > 0xff
+  regs.status.zero = (regs.x==0) ? 1 : 0;
+  regs.status.overflow = 0;
+  regs.status.negative = (regs.x & 0x80) ? 1 : 0;
+}
 
 
 void opcode_sec()
@@ -901,11 +935,11 @@ void cpu_init()
   OPCODE(0xac, "ldy", 3, 4, opcode_ldy, addrmode_abs)
   OPCODE(0xbc, "ldy", 3, 4, opcode_ldy, addrmode_abs_x)
 
-  // OPCODE(0x4a, "lsr", 1, 2, opcode_lsr)
-  // OPCODE(0x46, "lsr", 2, 5, opcode_lsr)
-  // OPCODE(0x56, "lsr", 2, 6, opcode_lsr)
-  // OPCODE(0x4e, "lsr", 3, 6, opcode_lsr)
-  // OPCODE(0x5e, "lsr", 3, 7, opcode_lsr)
+  OPCODE(0x4a, "lsr", 1, 2, opcode_lsr, NULL)
+  OPCODE(0x46, "lsr", 2, 5, opcode_lsr, addrmode_zero_page)
+  OPCODE(0x56, "lsr", 2, 6, opcode_lsr, addrmode_zero_page_x)
+  OPCODE(0x4e, "lsr", 3, 6, opcode_lsr, addrmode_abs)
+  OPCODE(0x5e, "lsr", 3, 7, opcode_lsr, addrmode_abs_x)
 
   OPCODE(0xea, "nop", 1, 2, opcode_nop, NULL)
 

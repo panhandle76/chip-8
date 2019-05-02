@@ -56,35 +56,3 @@ void cpu_init();
 void cpu_load_prg(const uint8_t* prg, uint8_t numblk);
 
 void cpu_reset();
-
-//////////////////////////
-
-void addrmode_immediate();
-
-void addrmode_zero_page();
-
-void addrmode_zero_page_x();
-
-void addrmode_zero_page_y();
-
-void addrmode_abs();
-
-void addrmode_abs_x();
-
-void addrmode_abs_y();
-
-void addrmode_indirect();
-
-void addrmode_indexed_indirect_x();
-
-void addrmode_indirect_indexed_y();
-
-//////////////////////////
-
-// void opcode_sec();
-// void opcode_sed();
-// void opcode_sei();
-
-// void opcode_sta();
-// void opcode_stx();
-// void opcode_sty();
